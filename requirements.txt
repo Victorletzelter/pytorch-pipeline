@@ -3,3 +3,8 @@ torchvision
 numpy
 tqdm
 tensorboard>=1.14
+argparse
+librosa
+requests
+pickle
+

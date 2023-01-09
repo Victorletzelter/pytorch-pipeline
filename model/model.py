@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from base import BaseModel
 
-
 class MnistModel(BaseModel):
     def __init__(self, num_classes=10):
         super().__init__()
@@ -22,7 +21,7 @@ class MnistModel(BaseModel):
         x = self.fc2(x)
         return F.log_softmax(x, dim=1)
 
-class Net(nn.Module):
+class Net(BaseModel):
     def __init__(self, data_in, data_out, dropout_rate, nb_cnn2d_filt, pool_size,
                  rnn_size, fnn_size, classification_mode):
         """
