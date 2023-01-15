@@ -1,0 +1,15 @@
+annotations_file: '/home/valerio/datasets/UrbanSound8K/metadata/UrbanSound8K.csv'
+audio_dir: '/home/valerio/datasets/UrbanSound8K/audio'
+preprocessed_data_dir : ''
+
+sample_rate: 22050
+num_samples: 22050
+transforms:
+  - type: STFT
+    n_fft: 1024
+    hop_length: 512
+  - type: MelSpectrogram
+    n_mels: 64
+  - type: Scaling
+    mean: 0.5
+    std: 0.5

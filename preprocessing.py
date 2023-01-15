@@ -2,31 +2,31 @@
 
 import argparse
 
-import data_loading
-import data_processing
-import data_augmentation
-import data_storage
+import data_preprocessing.data_loading
+import data_preprocessing.data_processing
+import data_preprocessing.data_augmentation
+import data_preprocessing.data_storage
 
 def main(args):
     # Load the audio data
     if args.url:
-        data, sample_rate = data_loading.load_from_url(args.url)
+        data, sample_rate = data_preprocessing.data_loading.load_from_url(args.url)
     else:
-        data, sample_rate = data_loading.load_from_file(args.file)
+        data, sample_rate = data_preprocessing.data_loading.load_from_file(args.file)
     
     # Preprocess the data
     if args.normalize:
-        data = data_processing.normalize(data)
+        data = data_preprocessing.data_processing.normalize(data)
     if args.filter:
-        data = data_processing.apply_filter(data, args.filter)
+        data = data_preprocessing.data_processing.apply_filter(data, args.filter)
     if args.extract_features:
-        data = data_processing.extract_features(data)
+        data = data_preprocessing.data_processing.extract_features(data)
     if args.augment:
-        data = data_augmentation.random_augmentation(data, sample_rate)
+        data = data_preprocessing.data_augmentation.random_augmentation(data, sample_rate)
     
     # Save the preprocessed data
     if args.save:
-        data_storage.save_to_file(data, args.save)
+        data_preprocessing.data_storage.save_to_file(data, args.save)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

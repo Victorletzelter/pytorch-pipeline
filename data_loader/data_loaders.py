@@ -48,30 +48,33 @@ class AudioDataLoader(BaseDataLoader):
             batch_size=batch_size,
             shuffle=shuffle,
         )
-        
+
     def _load_data(self):
         """
-        Load audio data and labels from the data directory.
+        Loads audio data and labels from the specified data directory. The data is loaded either from the audio files or from tensors depending 
+        on the `save_as_tensor` parameter.
+        Returns a list of tuples containing the audio data and labels.
         """
         audio_data = []
         labels = []
-        
-        # Iterate over files in the data directory
         for filename in os.listdir(self.data_dir):
-            # Load audio data and label from file
-            audio, label = self._load_audio_file(os.path.join(self.data_dir, filename))
-
-            if self.transform:
-                audio = self.transform(audio)
-
+            if self.save_as_tensor:
+                audio, label = self._load_tensor_file(os.path.join(self.data_dir, filename))
+            else:
+                audio, label = self._load_audio_file(os.path.join(self.data_dir, filename))
             audio_data.append(audio)
             labels.append(label)
-        
-        return audio_data, labels
-    
+        return list(zip(audio_data, labels))
+
     def _load_audio_file(self, filepath):
         # Load audio data and sample rate from WAV file
         audio, sr = read(filepath)
         # Extract label from file name
         label = os.path.splitext(os.path.basename(filepath))[0]
+        return audio, label
+    
+    def _load_tensor_file(self, filepath):
+        data = torch.load(filepath)
+        audio = data['signal']
+        label = data['label']
         return audio, label
