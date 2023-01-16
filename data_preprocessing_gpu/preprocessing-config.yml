@@ -11,5 +11,5 @@ transforms:
   - type: MelSpectrogram
     n_mels: 64
   - type: Scaling
-    mean: 0.5
-    std: 0.5
+    mean: 0
+    std: 1
