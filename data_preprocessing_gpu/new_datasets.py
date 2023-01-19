@@ -230,10 +230,9 @@ def pcen_audio(signal, sr, alpha=0.98, delta=2, r=0.5, s=0.98, epsilon=1e-8, n_m
     # Compute mel spectrogram
     mel_spectrogram = torchaudio.transforms.MelSpectrogram(sample_rate=sr, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length)(signal)
     E_ = torch.cat([mel_spectrogram[:, :1], mel_spectrogram[:, :-1]], dim=1)
-    M = torch.nn.functional.conv1d(E_, torch.tensor([1-s, s], device=E.device).view(1,2,1), stride=1)
+    M = torch.nn.functional.conv1d(E_, torch.tensor([1-s, s], device=mel_spectrogram.device).view(1,2,1), stride=1)
     M = M + epsilon
     return ((mel_spectrogram / (M)**alpha) + delta)**r - delta**r
-
 
 def load_annotations(annotations_file):
     return pd.read_csv(annotations_file)
