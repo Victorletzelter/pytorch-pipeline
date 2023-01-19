@@ -73,7 +73,7 @@ class SALSA(torch.nn.Module):
 
 class Audio_preprocess_dataset(Dataset):
     # Class for performing audio preprocessing, possibly using a GPU. 
-    def __init__(self, config, annotation_loader, audio_loader, device):
+    def __init__(self, config, annotation_loader_with_indexes, audio_loader, device):
         """
         Initializes the Audio_preprocess_dataset class. It loads the configuration settings from the yaml file config, 
         the annotations data using annotation_loader, sets the audio data directory 
@@ -82,7 +82,7 @@ class Audio_preprocess_dataset(Dataset):
         """
         with open(config, 'r') as f:
             config = yaml.safe_load(f) #The configuration of the preprocessing is loaded
-        self.annotations = annotation_loader(config['annotations_file'])
+        self.annotations = annotation_loader_with_indexes(config['annotations_dir'])
         self.audio_dir = config['audio_dir']
         self.device = device 
         self.audio_loader = audio_loader
@@ -107,25 +107,37 @@ class Audio_preprocess_dataset(Dataset):
         Returns the preprocessed audio signal and label of the sample at index index from the dataset.
         """
         audio_sample_path = self._get_audio_sample_path(index)
-        label = self._get_audio_sample_label(index)
+        # label = self._get_audio_sample_label(index)
         signal, sr = self.audio_loader(audio_path = audio_sample_path, config = self.config)
         signal = signal.to(self.device)
-        return signal, label
+        return signal
 
     def _get_audio_sample_path(self, index):
         """
-         Returns the file path of the audio sample at index index.
+         Returns the file path of the audio sample at index index supposing the audio is in the WAV format.
         """
-        fold = f"fold{self.annotations.iloc[index, 5]}"
-        path = os.path.join(self.audio_dir, fold, self.annotations.iloc[
-            index, 0])
+        filenames = {}
+        for key in self.annotations:
+            number = key.split("_")[-1]
+            filenames[number] = key.split('_idx_'+number)[-2]
+        
+        filename_from_index = filenames[str(index)]+'.wav'
+        path = os.path.join(self.audio_dir, filename_from_index)
+
         return path
 
     def _get_audio_sample_label(self, index):
         """
         Returns the label of the audio sample at index index.
         """
-        return self.annotations.iloc[index, 6]
+        filenames = {}
+        for key in self.annotations:
+            number = key.split("_")[-1]
+            filenames[number] = key.split('_idx_'+number)[-2]
+        
+        filename_from_index = filenames[str(index)]
+
+        return self.annotations[filename_from_index+'_idx_'+str(index)]
 
     def preprocess_and_save(self, batch_size=1,num_workers=0,save_as_tensor=True):
         """
@@ -135,16 +147,15 @@ class Audio_preprocess_dataset(Dataset):
         """
         dataloader = torch.utils.data.DataLoader(dataset=self, batch_size=batch_size, num_workers=num_workers, shuffle=True)
         for i, data in enumerate(dataloader):
-            signals, labels = data
+            print(i)
+            signals = data
             for j in range(batch_size):
                 signal = signals[j]
-                label = labels[j]
                 filename = os.path.basename(self._get_audio_sample_path(i*batch_size+j))
-                processed_path = os.path.join(self.processed_data_dir, filename)
+                processed_path = os.path.join(self.processed_data_dir, 'processed_'+filename.split('.wav')[-2])
 
                 if save_as_tensor: 
-                    state = {'signal': signal, 'label': label}
-                    torch.save(state, processed_path)
+                    torch.save(signal, processed_path)
 
                 else : 
                     torchaudio.save(processed_path, signal.to("cpu"), sr=self.config['sample_rate'])
@@ -162,7 +173,7 @@ def load_audio(audio_path, config):
 
     for transform in config['transforms']:
         if transform['type'] == 'STFT':
-            signal = torch.stft(signal, n_fft=transform['n_fft'], hop_length=transform['hop_length'])
+            signal = torch.stft(signal, n_fft=transform['n_fft'], hop_length=transform['hop_length'],window=transform['window'],return_complex=True)
         elif transform['type'] == 'PowerSpectrogram':
             signal = torchaudio.transforms.PowerSpectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'])(signal)
         elif transform['type'] == 'MelSpectrogram':
@@ -212,20 +223,21 @@ def load_audio(audio_path, config):
 
     return signal, sr
 
-def pcen_audio(signal, sr, alpha=0.98, delta=2, r=0.5, s=0.98, epsilon=1e-8, n_mels=128, n_fft=2048, hop_length=None):
+def pcen_audio(signal, sr, alpha=0.98, delta=2, r=0.5, s=0.025, epsilon=1e-8, n_mels=128, n_fft=2048, hop_length=None):
     """
     Perform PCEN transform on raw audio signal
-    :param signal: 1D tensor representing the raw audio signal
-    :param sr: Sample rate of the raw audio signal
-    :param alpha: The alpha parameter in the PCEN formula.
-    :param delta: The delta parameter in the PCEN formula.
-    :param r: The r parameter in the PCEN formula.
-    :param s: The s parameter in the PCEN formula.
-    :param epsilon: The epsilon parameter in the PCEN formula.
-    :param n_mels: Number of mel filters to use
-    :param n_fft: FFT window size
-    :param hop_length: The hop length of the STFT
-    :return: 3D tensor representing the PCEN transformed mel frequency spectrogram
+    Parameters:
+    signal: 1D tensor representing the raw audio signal
+    sr: Sample rate of the raw audio signal
+    alpha: The alpha parameter in the PCEN formula.
+    delta: The delta parameter in the PCEN formula.
+    r: The r parameter in the PCEN formula.
+    s: The s parameter in the PCEN formula.
+    epsilon: The epsilon parameter in the PCEN formula.
+    n_mels: Number of mel filters to use
+    n_fft: FFT window size
+    hop_length: The hop length of the STFT
+    return: 3D tensor representing the PCEN transformed mel frequency spectrogram
     """
     # Compute mel spectrogram
     mel_spectrogram = torchaudio.transforms.MelSpectrogram(sample_rate=sr, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length)(signal)
@@ -234,8 +246,22 @@ def pcen_audio(signal, sr, alpha=0.98, delta=2, r=0.5, s=0.98, epsilon=1e-8, n_m
     M = M + epsilon
     return ((mel_spectrogram / (M)**alpha) + delta)**r - delta**r
 
-def load_annotations(annotations_file):
-    return pd.read_csv(annotations_file)
+def load_annotations_with_indexes(annotation_dir) :
+    """
+    Function that loads annotations files supposed to be in CSV format in a given directory. 
+    This also associates indexes with each file to be consistent with the torch.utils.Dataset parent class. 
+    The loaded annotation for each file are stored in a dictionnary.
+    """
+    index = 0
+    annotations = {}
+    for file in os.listdir(annotation_dir) :
+        annotations['{}'.format(file.split('.csv')[-2])+'_idx_{}'.format(str(index))] = torch.tensor(pd.read_csv(os.path.join(annotation_dir,file)).values)
+        index += 1
+    print('OK')
+    return annotations
+
+# def load_annotations(annotations_file):
+#     return pd.read_csv(annotations_file)
 
 def _cut_if_necessary(signal, num_samples):
     if signal.shape[1] > num_samples:
@@ -298,10 +324,10 @@ def main():
     CONFIG_FILE = "preprocessing-config.yml"
 
     # create the dataset
-    dataset = Audio_preprocess_dataset(config=CONFIG_FILE, annotation_loader=load_annotations, audio_loader=load_audio, device=device)
+    dataset = Audio_preprocess_dataset(config=CONFIG_FILE, annotation_loader_with_indexes=load_annotations_with_indexes, audio_loader=load_audio, device=device)
 
-    # preprocess and save the audio data
-    batch_size = 16
+    # # preprocess and save the audio data
+    batch_size = 1
     num_workers = 0
     save_as_tensor = True
     dataset.preprocess_and_save(batch_size, num_workers, save_as_tensor)
