@@ -145,7 +145,7 @@ class Audio_preprocess_dataset(Dataset):
         It applies preprocessing to the audio signals using the function load_audio and saves the preprocessed data as tensors 
         if save_as_tensor is True, otherwise it saves the data in audio format.
         """
-        dataloader = torch.utils.data.DataLoader(dataset=self, batch_size=batch_size, num_workers=num_workers, shuffle=True)
+        dataloader = torch.utils.data.DataLoader(dataset=self, batch_size=batch_size, num_workers=num_workers, shuffle=False)
         for i, data in enumerate(dataloader):
             print(i)
             signals = data
@@ -172,10 +172,15 @@ def load_audio(audio_path, config):
     signal = _right_pad_if_necessary(signal, config['num_samples'])
 
     for transform in config['transforms']:
+
+        if 'window' in transform : #The processing is for now only adapted with Hann window.
+            if transform['window']=='hann' :
+                window_fn=torch.hann_window
+
         if transform['type'] == 'STFT':
-            signal = torch.stft(signal, n_fft=transform['n_fft'], hop_length=transform['hop_length'],window=transform['window'],return_complex=True)
+            signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=window_fn)(signal)
         elif transform['type'] == 'PowerSpectrogram':
-            signal = torchaudio.transforms.PowerSpectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'])(signal)
+            signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=window_fn,power=2)(signal)
         elif transform['type'] == 'MelSpectrogram':
             signal = torchaudio.transforms.MelSpectrogram(sample_rate=config['sample_rate'], n_mels=transform['n_mels'])(signal)
         elif transform['type'] == 'Scaling':
@@ -196,7 +201,7 @@ def load_audio(audio_path, config):
             salsa = SALSA(n_fft=transform['n_fft'], hop_length=transform['hop_length'], itd=transform['itd'], icld=transform['icld'])
             signal = salsa(signal)
         elif transform['type'] == 'SALSA_LITE':
-            signal = torch.stft(signal, n_fft=transform['n_fft'], hop_length=transform['hop_length'])
+            signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=transform['window'])(signal)
             magnitude_spectrogram = torch.abs(signal)
             log_magnitude_spectrogram = torch.log(magnitude_spectrogram + transform['log_epsilon'])
             if 'icld' in transform and transform['icld']:
@@ -209,7 +214,7 @@ def load_audio(audio_path, config):
         elif transform['type'] == 'GCC_PHAT':
             epsilon = 1e-8
             if 'STFT' not in [i['type'] for i in config['transforms']]:
-                signal = torch.stft(signal, n_fft=transform['n_fft'], hop_length=transform['hop_length'])
+                signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=transform['window'])(signal)
             # reshaping the tensors 
             magnitude_spectrogram1 = signal[0,:,:].view(-1,1)
             magnitude_spectrogram2 = signal[1,:,:].view(-1,1)
@@ -321,7 +326,7 @@ def main():
     print(f"Using device {device}")
 
     # load the configuration file
-    CONFIG_FILE = "preprocessing-config.yml"
+    CONFIG_FILE = "/root/workspace/pytorch-pipeline-1/data_preprocessing_gpu/preprocessing-config.yml"
 
     # create the dataset
     dataset = Audio_preprocess_dataset(config=CONFIG_FILE, annotation_loader_with_indexes=load_annotations_with_indexes, audio_loader=load_audio, device=device)
