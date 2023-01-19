@@ -207,8 +207,33 @@ def load_audio(audio_path, config):
             denominator += epsilon
             gcc_phat = torch.div(numerator, denominator)
             signal = torch.angle(gcc_phat)
+        elif transform['type'] == 'PCEN':
+            signal = pcen_audio(signal,alpha=transform['alpha'],delta=transform['delta'],r=transform['r'],s=transform['s'],epsilon=transform['epsilon'])
 
     return signal, sr
+
+def pcen_audio(signal, sr, alpha=0.98, delta=2, r=0.5, s=0.98, epsilon=1e-8, n_mels=128, n_fft=2048, hop_length=None):
+    """
+    Perform PCEN transform on raw audio signal
+    :param signal: 1D tensor representing the raw audio signal
+    :param sr: Sample rate of the raw audio signal
+    :param alpha: The alpha parameter in the PCEN formula.
+    :param delta: The delta parameter in the PCEN formula.
+    :param r: The r parameter in the PCEN formula.
+    :param s: The s parameter in the PCEN formula.
+    :param epsilon: The epsilon parameter in the PCEN formula.
+    :param n_mels: Number of mel filters to use
+    :param n_fft: FFT window size
+    :param hop_length: The hop length of the STFT
+    :return: 3D tensor representing the PCEN transformed mel frequency spectrogram
+    """
+    # Compute mel spectrogram
+    mel_spectrogram = torchaudio.transforms.MelSpectrogram(sample_rate=sr, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length)(signal)
+    E_ = torch.cat([mel_spectrogram[:, :1], mel_spectrogram[:, :-1]], dim=1)
+    M = torch.nn.functional.conv1d(E_, torch.tensor([1-s, s], device=E.device).view(1,2,1), stride=1)
+    M = M + epsilon
+    return ((mel_spectrogram / (M)**alpha) + delta)**r - delta**r
+
 
 def load_annotations(annotations_file):
     return pd.read_csv(annotations_file)
