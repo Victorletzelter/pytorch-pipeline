@@ -4,6 +4,72 @@ from torch.utils.data import Dataset
 import pandas as pd
 import torchaudio
 import yaml
+import numpy as np
+
+class SALSA(torch.nn.Module):
+    """
+    A PyTorch implementation of the SALSA (Spatial Cue-Augmented Log-Spectrogram Features) transform.
+    """
+    def __init__(self, n_fft, hop_length, itd=True, icld=True):
+        super().__init__()
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.itd = itd
+        self.icld = icld
+
+    def calculate_itd(self, signal):
+        """
+        Calculates the inter-channel time difference of arrival (ITD) for each channel in the signal.
+        """
+        # Example implementation:
+        # Compute the cross-correlation between each channel and the reference channel
+        reference_channel = 0
+        itd = np.zeros((signal.shape[0], signal.shape[1]))
+        for channel in range(signal.shape[0]):
+            if channel != reference_channel:
+                cross_correlation = np.correlate(signal[reference_channel], signal[channel], mode='full')
+                lag = np.argmax(cross_correlation) - signal.shape[1]
+                itd[channel] = lag / float(self.sample_rate)
+        return itd
+
+    def calculate_icld(self, signal):
+        """
+        Calculates the inter-channel level difference (ICLD) for each channel in the signal.
+        """
+        icld = np.zeros((signal.shape[0], signal.shape[1]))
+        for channel in range(signal.shape[0]):
+            for ref_channel in range(signal.shape[0]):
+                if channel != ref_channel:
+                    icld[channel] = 20*np.log10(np.mean(signal[channel])/np.mean(signal[ref_channel]))
+        return icld
+
+    def forward(self, signal):
+        signal = signal.squeeze(0)  # remove the batch dimension
+        signal = signal.numpy()  # convert the tensor to a numpy array
+        signal = signal.T  # transpose the signal to have shape (n_channels, n_samples)
+
+        # Compute the STFT
+        stft_matrix = np.abs(np.fft.fft(signal, n=self.n_fft))
+
+        # Compute the log-spectrogram
+        log_spectrogram = np.log10(stft_matrix ** 2)
+
+        # Extract the inter-channel time difference of arrival (ITD) and inter-channel level difference (ICLD)
+        itd = self.calculate_itd(signal) if self.itd else None
+        icld = self.calculate_icld(signal) if self.icld else None
+
+        # Concatenate the log-spectrogram and the spatial cues to form the SALSA features
+        if self.itd and self.icld:
+            salsa_features = np.concatenate((log_spectrogram, itd, icld), axis=0)
+        elif self.itd:
+            salsa_features = np.concatenate((log_spectrogram, itd), axis=0)
+        elif self.icld:
+            salsa_features = np.concatenate((log_spectrogram, icld), axis=0)
+        else:
+            salsa_features = log_spectrogram
+        # Convert the features to a tensor and return
+        salsa_features = torch.from_numpy(salsa_features)
+        return salsa_features
 
 class Audio_preprocess_dataset(Dataset):
     # Class for performing audio preprocessing, possibly using a GPU. 
@@ -115,6 +181,33 @@ def load_audio(audio_path, config):
             signal = torchaudio.transforms.FrequencyMasking(freq_mask_param=transform['freq_mask_param'])(signal)
         elif transform['type'] == 'TimeMasking':
             signal = torchaudio.transforms.TimeMasking(time_mask_param=transform['time_mask_param'])(signal)
+        elif transform['type'] == 'SALSA':
+            salsa = SALSA(n_fft=transform['n_fft'], hop_length=transform['hop_length'], itd=transform['itd'], icld=transform['icld'])
+            signal = salsa(signal)
+        elif transform['type'] == 'SALSA_LITE':
+            signal = torch.stft(signal, n_fft=transform['n_fft'], hop_length=transform['hop_length'])
+            magnitude_spectrogram = torch.abs(signal)
+            log_magnitude_spectrogram = torch.log(magnitude_spectrogram + transform['log_epsilon'])
+            if 'icld' in transform and transform['icld']:
+                icld = torch.sum(magnitude_spectrogram[:,0,:] * magnitude_spectrogram[:,1,:], dim=1)
+                icld = torch.div(icld, torch.sum(magnitude_spectrogram[:,0,:]**2, dim=1) + torch.sum(magnitude_spectrogram[:,1,:]**2, dim=1))
+                icld = torch.log(icld + transform['log_epsilon'])
+                signal = torch.cat((log_magnitude_spectrogram, icld.view(-1,1)),dim=1)
+            else:
+                signal = log_magnitude_spectrogram
+        elif transform['type'] == 'GCC_PHAT':
+            epsilon = 1e-8
+            if 'STFT' not in [i['type'] for i in config['transforms']]:
+                signal = torch.stft(signal, n_fft=transform['n_fft'], hop_length=transform['hop_length'])
+            # reshaping the tensors 
+            magnitude_spectrogram1 = signal[0,:,:].view(-1,1)
+            magnitude_spectrogram2 = signal[1,:,:].view(-1,1)
+            numerator = torch.sum(magnitude_spectrogram1*torch.conj(magnitude_spectrogram2), dim=0)
+            denominator = torch.sqrt(torch.sum(torch.abs(magnitude_spectrogram1)**2, dim=0)*torch.sum(torch.abs(magnitude_spectrogram2)**2, dim=0))
+            denominator += epsilon
+            gcc_phat = torch.div(numerator, denominator)
+            signal = torch.angle(gcc_phat)
+
     return signal, sr
 
 def load_annotations(annotations_file):
@@ -143,6 +236,34 @@ def _mix_down_if_necessary(signal):
     if signal.shape[0] > 1:
         signal = torch.mean(signal, dim=0, keepdim=True)
     return signal
+
+# def calculate_gcc_phat(magnitude_spectrogram1, magnitude_spectrogram2):
+#     """
+#     This function takes two magnitude spectrograms and calculates the GCC-PHAT values.
+#     It first calculates the numerator of the GCC-PHAT values by taking the element-wise product of the two magnitude spectrograms and summing the result over the frequency axis.
+#     Then it calculates the denominator of the GCC-PHAT values by taking the sum of the squares of the magnitudes of each spectrogram and taking the square root of the product of the two sums.
+#     Finally, it calculates the GCC-PHAT values by taking the angle of the element-wise division of the numerator by the denominator.
+#     """
+#     numerator = np.sum(magnitude_spectrogram1*np.conj(magnitude_spectrogram2), axis=0)
+#     denominator = np.sqrt(np.sum(np.abs(magnitude_spectrogram1)**2, axis=0)*np.sum(np.abs(magnitude_spectrogram2)**2, axis=0))
+#     gcc_phat = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator!=0)
+#     return np.angle(gcc_phat)
+
+
+# def calculate_gcc_phat_all_pairs(magnitude_spectrograms):
+#     """
+#     This function takes a list of magnitude spectrograms, one per channel, and calculates the GCC-PHAT values between all pairs of channels.
+#     It creates an empty array, gcc_phat_all_pairs, with dimensions (num_channels,num_channels,magnitude_spectrograms[0].shape[0],magnitude_spectrograms[0].shape[1]) to store the GCC-PHAT values.
+#     It iterates over all pairs of channels, and for each pair, it calls the calculate_gcc_phat() function with the two magnitude spectrograms to get the GCC-PHAT values.
+#     Then it stores the GCC-PHAT values in the gcc_phat_all_pairs array.
+#     """
+#     num_channels = len(magnitude_spectrograms)
+#     gcc_phat_all_pairs = np.zeros((num_channels,num_channels,magnitude_spectrograms[0].shape[0],magnitude_spectrograms[0].shape[1]))
+#     for i in range(num_channels):
+#         for j in range(i,num_channels):
+#             gcc_phat_all_pairs[i,j,:,:] = calculate_gcc_phat(magnitude_spectrograms[i], magnitude_spectrograms[j])
+#             gcc_phat_all_pairs[j,i,:,:] = calculate_gcc_phat(magnitude_spectrograms[j], magnitude_spectrograms[i])
+#     return gcc_phat_all_pairs
 
 def main():
     # set the device to use for preprocessing
