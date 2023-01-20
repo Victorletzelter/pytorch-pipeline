@@ -186,25 +186,31 @@ def load_audio(audio_path, config):
         elif transform['type'] == 'MelSpectrogram':
             signal = torchaudio.transforms.MelSpectrogram(sample_rate=config['sample_rate'], n_mels=transform['n_mels'],n_fft=transform['n_fft'], 
             hop_length=transform['hop_length'],window_fn=window_fn)(signal)
-        elif transform['type'] == 'Scaling':
-            signal = signal-transform['mean']
+        elif transform['type'] == 'Scale':
+            signal = transform['mean']+transform['std']*(signal-signal.mean())/signal.std()
         elif transform['type'] == 'MFCC':
             signal = torchaudio.transforms.MFCC(sample_rate=config['sample_rate'], n_mfcc=transform['n_mfcc'])(signal)
         elif transform['type'] == 'MinMaxScaler':
-            signal = torchaudio.transforms.MinMaxScaling(min=transform['min'], max=transform['max'])(signal)
+            signal = (signal-signal.min())/(signal.max()-signal.min())
         elif transform['type'] == 'AmplitudeToDB':
             signal = torchaudio.transforms.AmplitudeToDB()(signal)
         elif transform['type'] == 'TimeStretch':
-            signal = torchaudio.transforms.TimeStretch(rate=transform['rate'])(signal)
+            if 'STFT' not in [i['type'] for i in config['transforms']]:
+                signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=window_fn)(signal)
+            signal = torchaudio.transforms.TimeStretch(fixed_rate=transform['fixed_rate'])(signal)
         elif transform['type'] == 'FrequencyMasking':
+            if 'STFT' not in [i['type'] for i in config['transforms']]:
+                signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=window_fn)(signal)
             signal = torchaudio.transforms.FrequencyMasking(freq_mask_param=transform['freq_mask_param'])(signal)
         elif transform['type'] == 'TimeMasking':
+            if 'STFT' not in [i['type'] for i in config['transforms']]:
+                signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=window_fn)(signal)
             signal = torchaudio.transforms.TimeMasking(time_mask_param=transform['time_mask_param'])(signal)
         elif transform['type'] == 'SALSA':
             salsa = SALSA(n_fft=transform['n_fft'], hop_length=transform['hop_length'], itd=transform['itd'], icld=transform['icld'])
             signal = salsa(signal)
         elif transform['type'] == 'SALSA_LITE':
-            signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=transform['window'])(signal)
+            signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=window_fn)(signal)
             magnitude_spectrogram = torch.abs(signal)
             log_magnitude_spectrogram = torch.log(magnitude_spectrogram + transform['log_epsilon'])
             if 'icld' in transform and transform['icld']:
