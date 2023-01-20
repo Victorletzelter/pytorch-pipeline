@@ -1,4 +1,5 @@
 import os
+import sys
 import torch
 from torch.utils.data import Dataset
 import pandas as pd
@@ -80,8 +81,9 @@ class Audio_preprocess_dataset(Dataset):
         and device, assigns the audio_loader and config as instance variable. 
         It also creates a directory to save the preprocessed data if it doesn't already exist.
         """
-        with open(config, 'r') as f:
-            config = yaml.safe_load(f) #The configuration of the preprocessing is loaded
+        if type(config) is str : #If the config is given as a path and not as a dictionnary
+            with open(config, 'r') as f:
+                config = yaml.safe_load(f) #The configuration of the preprocessing is loaded
         self.annotations = annotation_loader_with_indexes(config['annotations_dir'])
         self.audio_dir = config['audio_dir']
         self.device = device 
@@ -166,10 +168,10 @@ def load_audio(audio_path, config):
     cutting, padding, and spectrogram transformation to the signal based on the settings in config.
     """
     signal, sr = torchaudio.load(audio_path)
-    signal = _resample_if_necessary(signal, sr, config['sample_rate'])
-    signal = _mix_down_if_necessary(signal)
-    signal = _cut_if_necessary(signal, config['num_samples'])
-    signal = _right_pad_if_necessary(signal, config['num_samples'])
+    # signal = _resample_if_necessary(signal, sr, config['sample_rate'])
+    # signal = _mix_down_if_necessary(signal)
+    # signal = _cut_if_necessary(signal, config['num_samples'])
+    # signal = _right_pad_if_necessary(signal, config['num_samples'])
 
     for transform in config['transforms']:
 
@@ -182,9 +184,10 @@ def load_audio(audio_path, config):
         elif transform['type'] == 'PowerSpectrogram':
             signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=window_fn,power=2)(signal)
         elif transform['type'] == 'MelSpectrogram':
-            signal = torchaudio.transforms.MelSpectrogram(sample_rate=config['sample_rate'], n_mels=transform['n_mels'])(signal)
+            signal = torchaudio.transforms.MelSpectrogram(sample_rate=config['sample_rate'], n_mels=transform['n_mels'],n_fft=transform['n_fft'], 
+            hop_length=transform['hop_length'],window_fn=window_fn)(signal)
         elif transform['type'] == 'Scaling':
-            signal = torchaudio.transforms.Scale(mean=transform['mean'], std=transform['std'])(signal)
+            signal = signal-transform['mean']
         elif transform['type'] == 'MFCC':
             signal = torchaudio.transforms.MFCC(sample_rate=config['sample_rate'], n_mfcc=transform['n_mfcc'])(signal)
         elif transform['type'] == 'MinMaxScaler':
@@ -262,7 +265,6 @@ def load_annotations_with_indexes(annotation_dir) :
     for file in os.listdir(annotation_dir) :
         annotations['{}'.format(file.split('.csv')[-2])+'_idx_{}'.format(str(index))] = torch.tensor(pd.read_csv(os.path.join(annotation_dir,file)).values)
         index += 1
-    print('OK')
     return annotations
 
 # def load_annotations(annotations_file):
@@ -292,6 +294,26 @@ def _mix_down_if_necessary(signal):
         signal = torch.mean(signal, dim=0, keepdim=True)
     return signal
 
+def main():
+    # set the device to use for preprocessing
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device {device}")
+
+    # load the configuration file
+    CONFIG_FILE = sys.argv[1]
+
+    # create the dataset
+    dataset = Audio_preprocess_dataset(config=CONFIG_FILE, annotation_loader_with_indexes=load_annotations_with_indexes, audio_loader=load_audio, device=device)
+
+    # # preprocess and save the audio data
+    batch_size = 5
+    num_workers = 0
+    save_as_tensor = True
+    dataset.preprocess_and_save(batch_size, num_workers, save_as_tensor)
+
+if __name__ == '__main__':
+    main()
+
 # def calculate_gcc_phat(magnitude_spectrogram1, magnitude_spectrogram2):
 #     """
 #     This function takes two magnitude spectrograms and calculates the GCC-PHAT values.
@@ -319,23 +341,3 @@ def _mix_down_if_necessary(signal):
 #             gcc_phat_all_pairs[i,j,:,:] = calculate_gcc_phat(magnitude_spectrograms[i], magnitude_spectrograms[j])
 #             gcc_phat_all_pairs[j,i,:,:] = calculate_gcc_phat(magnitude_spectrograms[j], magnitude_spectrograms[i])
 #     return gcc_phat_all_pairs
-
-def main():
-    # set the device to use for preprocessing
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device {device}")
-
-    # load the configuration file
-    CONFIG_FILE = "/root/workspace/pytorch-pipeline-1/data_preprocessing_gpu/preprocessing-config.yml"
-
-    # create the dataset
-    dataset = Audio_preprocess_dataset(config=CONFIG_FILE, annotation_loader_with_indexes=load_annotations_with_indexes, audio_loader=load_audio, device=device)
-
-    # # preprocess and save the audio data
-    batch_size = 1
-    num_workers = 0
-    save_as_tensor = True
-    dataset.preprocess_and_save(batch_size, num_workers, save_as_tensor)
-
-if __name__ == '__main__':
-    main()
