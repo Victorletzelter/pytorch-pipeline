@@ -2,9 +2,13 @@ annotations_dir: '/root/workspace/dataset_2022/metadata_dev/dev-test-sony'
 audio_dir: '/root/workspace/dataset_2022/mic_dev/dev-test-sony'
 preprocessed_data_dir : '/root/workspace/dataset_2022/mic_dev/preprocessed_dir'
 sample_rate: 24000
-num_samples: 1440000
+num_samples: 240000
+mix_down: False
 transforms:
   - type: STFT
     n_fft: 1024
     hop_length: 512
     window: 'hann'
+data :
+  nb_unique_classes : 13
+  nb_label_frames: 100

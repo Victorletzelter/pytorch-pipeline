@@ -358,7 +358,10 @@ class Audio_preprocess_dataset(Dataset):
         if type(config) is str : #If the config is given as a path and not as a dictionnary
             with open(config, 'r') as f:
                 config = yaml.safe_load(f) #The configuration of the preprocessing is loaded
+                
         self.annotations = annotation_loader_with_indexes(config['annotations_dir'])
+        self.annotations = convert_polar_to_cartesian(self.annotations) #Supposing that the output data is in the polar format, the output 
+        # is converted into the cartesian format.
         self.audio_dir = config['audio_dir']
         self.device = device 
         self.audio_loader = audio_loader
@@ -383,10 +386,12 @@ class Audio_preprocess_dataset(Dataset):
         Returns the preprocessed audio signal and label of the sample at index index from the dataset.
         """
         audio_sample_path = self._get_audio_sample_path(index)
-        # label = self._get_audio_sample_label(index)
+        unformatted_labels = self._get_audio_sample_label(index)
         signal, sr = self.audio_loader(audio_path = audio_sample_path, config = self.config)
+        labels = load_labels(unformatted_labels, self.config)
         signal = signal.to(self.device)
-        return signal
+        labels = labels.to(self.device)
+        return signal,labels
 
     def _get_audio_sample_path(self, index):
         """
@@ -424,17 +429,21 @@ class Audio_preprocess_dataset(Dataset):
         dataloader = torch.utils.data.DataLoader(dataset=self, batch_size=batch_size, num_workers=num_workers, shuffle=False,pin_memory=False)
         for i, data in enumerate(dataloader):
             print(i)
-            signals = data
+            signals, labels = data
             for j in range(batch_size):
                 signal = signals[j]
+                corresponding_labels = labels[j]
                 filename = os.path.basename(self._get_audio_sample_path(i*batch_size+j))
-                processed_path = os.path.join(self.processed_data_dir, 'processed_'+filename.split('.wav')[-2])
+                processed_signals_path = os.path.join(self.processed_data_dir, 'processed_'+filename.split('.wav')[-2])
+                processed_labels_path = os.path.join(self.processed_data_dir, 'processed_labels_'+filename.split('.wav')[-2])
 
                 if save_as_tensor: 
-                    torch.save(signal, processed_path)
+                    torch.save(signal, processed_signals_path)
 
                 else : 
-                    torchaudio.save(processed_path, signal.to("cpu"), sr=self.config['sample_rate'])
+                    torchaudio.save(processed_signals_path, signal.to("cpu"), sr=self.config['sample_rate'])
+                
+                torch.save(corresponding_labels, processed_labels_path)
 
 def load_audio(audio_path, config):
     """
@@ -442,10 +451,16 @@ def load_audio(audio_path, config):
     cutting, padding, and spectrogram transformation to the signal based on the settings in config.
     """
     signal, sr = torchaudio.load(audio_path)
-    # signal = _resample_if_necessary(signal, sr, config['sample_rate'])
-    # signal = _mix_down_if_necessary(signal)
-    # signal = _cut_if_necessary(signal, config['num_samples'])
-    # signal = _right_pad_if_necessary(signal, config['num_samples'])
+    
+    if "sample_rate" in config :
+        signal = _resample_if_necessary(signal, sr, config['sample_rate']) #For re sampling the signal
+    
+    if config['mix_down'] is True: 
+        signal = _mix_down_if_necessary(signal) #For collapsing the channels into one single channel by averaging
+    
+    if "num_samples" in config :
+        signal = _cut_if_necessary(signal, config['num_samples']) #For cropping the signal in accordance with config['num_samples']
+        signal = _right_pad_if_necessary(signal, config['num_samples']) #For padding the signal in accordance with config['num_samples']
 
     for transform in config['transforms']:
 
@@ -515,6 +530,89 @@ def load_audio(audio_path, config):
             signal = pcen_audio(signal,alpha=transform['alpha'],delta=transform['delta'],r=transform['r'],s=transform['s'],epsilon=transform['epsilon'])
 
     return signal, sr
+
+def convert_polar_to_cartesian(dict_polar_tensors) :
+    """
+    Function that converts a dictionnary of 2D tensors whose last two columns correspond to positions in polar coordinates (i.e azimut and
+    elevation in that order), into another dictionnary of 2D tensors in which those last two columns are converted in the cartesian format 
+    considering the sources a located in the unit sphere (i.e radius = 1).
+    """
+    dict_cartesian_tensors = {}
+    
+    for key in dict_polar_tensors : 
+    
+        azi_rad = dict_polar_tensors[key][:,-2]*np.pi/180
+        ele_rad = dict_polar_tensors[key][:,-1]*np.pi/180
+        tmp_label = torch.cos(ele_rad)
+        x = torch.cos(azi_rad)*tmp_label
+        y = torch.sin(azi_rad)*tmp_label
+        z = torch.sin(ele_rad)
+        dict_cartesian_tensors[key] = torch.cat((dict_polar_tensors[key][:,0:3],x[:,None],y[:,None],z[:,None]),dim=1)
+    
+    return dict_cartesian_tensors 
+
+# ------------------------------- EXTRACT LABELS AND PREPROCESS IT -------------------------------
+def extract_all_labels(self):
+    self.get_frame_stats()
+    self._label_dir = self.get_label_dir()
+
+    print('Extracting labels:')
+    print('\t\taud_dir {}\n\t\tdesc_dir {}\n\t\tlabel_dir {}'.format(
+        self._aud_dir, self._desc_dir, self._label_dir))
+    create_folder(self._label_dir)
+    for sub_folder in os.listdir(self._desc_dir):
+        loc_desc_folder = os.path.join(self._desc_dir, sub_folder)
+        for file_cnt, file_name in enumerate(os.listdir(loc_desc_folder)):
+            wav_filename = '{}.wav'.format(file_name.split('.')[0])
+            nb_label_frames = self._filewise_frames[file_name.split('.')[0]][1]
+            desc_file_polar = self.load_output_format_file(os.path.join(loc_desc_folder, file_name))
+            desc_file = self.convert_output_format_polar_to_cartesian(desc_file_polar)
+            if self._multi_accdoa:
+                label_mat = self.get_adpit_labels_for_file(desc_file, nb_label_frames)
+            else:
+                label_mat = self.get_labels_for_file(desc_file, nb_label_frames)
+            print('{}: {}, {}'.format(file_cnt, file_name, label_mat.shape))
+            np.save(os.path.join(self._label_dir, '{}.npy'.format(wav_filename.split('.')[0])), label_mat)
+
+def load_labels(cartesian_tensor, config):
+        """
+        Loads a 2D tensor of shape (..., 5) and converts it into a (n_label_frames, n_classes, 3) tensor.
+        Credits: https://github.com/sharathadavanne/seld-dcase2022/blob/c8adb1d3a5a35de2d6c7b6d19e01ad455eef3986/cls_feature_class.py
+        :param _desc_file: metadata description file
+        :return: label_mat: of dimension [nb_frames, 3*max_classes], max_classes each for x, y, z axis,
+        """
+        SED_label = torch.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
+        x_label = torch.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
+        y_label = torch.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
+        z_label = torch.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
+        
+        for line in range(cartesian_tensor.shape[0]) :
+            SED_label[cartesian_tensor[line,0],cartesian_tensor[line,1]]=1
+            x_label[cartesian_tensor[line,0],cartesian_tensor[line,1]]=cartesian_tensor[line,2]
+            y_label[cartesian_tensor[line,0],cartesian_tensor[line,1]]=cartesian_tensor[line,3]
+            z_label[cartesian_tensor[line,0],cartesian_tensor[line,1]]=cartesian_tensor[line,4]
+            
+        label_mat = torch.cat((SED_label,x_label,y_label,z_label),dim=1)
+        
+        return label_mat
+         
+        # # If using Hungarian net set default DOA value to a fixed value greater than 1 for all axis. We are choosing a fixed value of 10
+        # # If not using Hungarian net use a deafult DOA, which is a unit vector. We are choosing (x, y, z) = (0, 0, 1)
+        # se_label = np.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
+        # x_label = np.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
+        # y_label = np.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
+        # z_label = np.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
+
+        # for frame_ind, active_event_list in _desc_file.items():
+        #     if frame_ind < config['data']['nb_label_frames']:
+        #         for active_event in active_event_list:
+        #             se_label[frame_ind, active_event[0]] = 1
+        #             x_label[frame_ind, active_event[0]] = active_event[2]
+        #             y_label[frame_ind, active_event[0]] = active_event[3]
+        #             z_label[frame_ind, active_event[0]] = active_event[4]
+
+        # label_mat = np.concatenate((se_label, x_label, y_label, z_label), axis=1)
+        # return label_mat
 
 def pcen_audio(signal, sr, alpha=0.98, delta=2, r=0.5, s=0.025, epsilon=1e-8, n_mels=128, n_fft=2048, hop_length=None):
     """
@@ -591,7 +689,7 @@ def main():
     dataset = Audio_preprocess_dataset(config=CONFIG_FILE, annotation_loader_with_indexes=load_annotations_with_indexes, audio_loader=load_audio, device=device)
 
     # # preprocess and save the audio data
-    batch_size = 1
+    batch_size = 2
     num_workers = 0
     save_as_tensor = True
     dataset.preprocess_and_save(batch_size, num_workers, save_as_tensor)

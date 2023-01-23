@@ -1,16 +1,18 @@
 {
-    "name": "Mnist_LeNet",
+    "name": "SELDNet",
     "n_gpu": 1,
 
     "arch": {
-        "type": "MnistModel",
-        "args": {}
+        "type": "Net",
+        "args": {"data_in" : (4,513,469), "data_out" : (), "dropout_rate" : 0.0, "nb_cnn2d_filt" : , "pool_size",
+        "rnn_size", "fnn_size", "classification_mode" : "event"
+    }
     },
     "data_loader": {
-        "type": "MnistDataLoader",
+        "type": "AudioDataLoader",
         "args":{
-            "data_dir": "data/",
-            "batch_size": 128,
+            "data_dir": "/root/workspace/dataset_2022/mic_dev/preprocessed_dir",
+            "batch_size": 1,
             "shuffle": true,
             "validation_split": 0.1,
             "num_workers": 2
@@ -36,7 +38,7 @@
         }
     },
     "trainer": {
-        "epochs": 100,
+        "epochs": 1,
 
         "save_dir": "saved/",
         "save_period": 1,
