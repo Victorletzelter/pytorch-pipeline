@@ -552,31 +552,31 @@ def convert_polar_to_cartesian(dict_polar_tensors) :
     return dict_cartesian_tensors 
 
 # ------------------------------- EXTRACT LABELS AND PREPROCESS IT -------------------------------
-def extract_all_labels(self):
-    self.get_frame_stats()
-    self._label_dir = self.get_label_dir()
+# def extract_all_labels(self):
+#     self.get_frame_stats()
+#     self._label_dir = self.get_label_dir()
 
-    print('Extracting labels:')
-    print('\t\taud_dir {}\n\t\tdesc_dir {}\n\t\tlabel_dir {}'.format(
-        self._aud_dir, self._desc_dir, self._label_dir))
-    create_folder(self._label_dir)
-    for sub_folder in os.listdir(self._desc_dir):
-        loc_desc_folder = os.path.join(self._desc_dir, sub_folder)
-        for file_cnt, file_name in enumerate(os.listdir(loc_desc_folder)):
-            wav_filename = '{}.wav'.format(file_name.split('.')[0])
-            nb_label_frames = self._filewise_frames[file_name.split('.')[0]][1]
-            desc_file_polar = self.load_output_format_file(os.path.join(loc_desc_folder, file_name))
-            desc_file = self.convert_output_format_polar_to_cartesian(desc_file_polar)
-            if self._multi_accdoa:
-                label_mat = self.get_adpit_labels_for_file(desc_file, nb_label_frames)
-            else:
-                label_mat = self.get_labels_for_file(desc_file, nb_label_frames)
-            print('{}: {}, {}'.format(file_cnt, file_name, label_mat.shape))
-            np.save(os.path.join(self._label_dir, '{}.npy'.format(wav_filename.split('.')[0])), label_mat)
+#     print('Extracting labels:')
+#     print('\t\taud_dir {}\n\t\tdesc_dir {}\n\t\tlabel_dir {}'.format(
+#         self._aud_dir, self._desc_dir, self._label_dir))
+#     create_folder(self._label_dir)
+#     for sub_folder in os.listdir(self._desc_dir):
+#         loc_desc_folder = os.path.join(self._desc_dir, sub_folder)
+#         for file_cnt, file_name in enumerate(os.listdir(loc_desc_folder)):
+#             wav_filename = '{}.wav'.format(file_name.split('.')[0])
+#             nb_label_frames = self._filewise_frames[file_name.split('.')[0]][1]
+#             desc_file_polar = self.load_output_format_file(os.path.join(loc_desc_folder, file_name))
+#             desc_file = self.convert_output_format_polar_to_cartesian(desc_file_polar)
+#             if self._multi_accdoa:
+#                 label_mat = self.get_adpit_labels_for_file(desc_file, nb_label_frames)
+#             else:
+#                 label_mat = self.get_labels_for_file(desc_file, nb_label_frames)
+#             print('{}: {}, {}'.format(file_cnt, file_name, label_mat.shape))
+#             np.save(os.path.join(self._label_dir, '{}.npy'.format(wav_filename.split('.')[0])), label_mat)
 
 def load_labels(cartesian_tensor, config):
         """
-        Loads a 2D tensor of shape (..., 5) and converts it into a (n_label_frames, n_classes, 3) tensor.
+        Loads a 2D tensor of shape (..., 5) and converts it into a (n_label_frames, n_classes, 4) tensor.
         Credits: https://github.com/sharathadavanne/seld-dcase2022/blob/c8adb1d3a5a35de2d6c7b6d19e01ad455eef3986/cls_feature_class.py
         :param _desc_file: metadata description file
         :return: label_mat: of dimension [nb_frames, 3*max_classes], max_classes each for x, y, z axis,
@@ -587,32 +587,16 @@ def load_labels(cartesian_tensor, config):
         z_label = torch.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
         
         for line in range(cartesian_tensor.shape[0]) :
-            SED_label[cartesian_tensor[line,0],cartesian_tensor[line,1]]=1
-            x_label[cartesian_tensor[line,0],cartesian_tensor[line,1]]=cartesian_tensor[line,2]
-            y_label[cartesian_tensor[line,0],cartesian_tensor[line,1]]=cartesian_tensor[line,3]
-            z_label[cartesian_tensor[line,0],cartesian_tensor[line,1]]=cartesian_tensor[line,4]
+            if cartesian_tensor[line,0]<config['data']['nb_label_frames'] :
+              SED_label[cartesian_tensor[line,0].int(),cartesian_tensor[line,1].int()]=1
+              x_label[cartesian_tensor[line,0].int(),cartesian_tensor[line,1].int()]=cartesian_tensor[line,2]
+              y_label[cartesian_tensor[line,0].int(),cartesian_tensor[line,1].int()]=cartesian_tensor[line,3]
+              z_label[cartesian_tensor[line,0].int(),cartesian_tensor[line,1].int()]=cartesian_tensor[line,4]
             
-        label_mat = torch.cat((SED_label,x_label,y_label,z_label),dim=1)
+        doa_mat = torch.stack((x_label,y_label,z_label),dim=-1)
+        label_mat = torch.cat((SED_label[:,:,None],doa_mat),dim=-1)
         
         return label_mat
-         
-        # # If using Hungarian net set default DOA value to a fixed value greater than 1 for all axis. We are choosing a fixed value of 10
-        # # If not using Hungarian net use a deafult DOA, which is a unit vector. We are choosing (x, y, z) = (0, 0, 1)
-        # se_label = np.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
-        # x_label = np.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
-        # y_label = np.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
-        # z_label = np.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
-
-        # for frame_ind, active_event_list in _desc_file.items():
-        #     if frame_ind < config['data']['nb_label_frames']:
-        #         for active_event in active_event_list:
-        #             se_label[frame_ind, active_event[0]] = 1
-        #             x_label[frame_ind, active_event[0]] = active_event[2]
-        #             y_label[frame_ind, active_event[0]] = active_event[3]
-        #             z_label[frame_ind, active_event[0]] = active_event[4]
-
-        # label_mat = np.concatenate((se_label, x_label, y_label, z_label), axis=1)
-        # return label_mat
 
 def pcen_audio(signal, sr, alpha=0.98, delta=2, r=0.5, s=0.025, epsilon=1e-8, n_mels=128, n_fft=2048, hop_length=None):
     """
