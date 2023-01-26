@@ -1,11 +1,11 @@
-annotations_dir: /content/meta-dev-test-sony/dev-test-sony
-audio_dir: /content/mic-dev-test-sony/dev-test-sony
+annotations_dir: /root/workspace/dataset_2022/metadata_dev/dev-test-sony
+audio_dir: /root/workspace/dataset_2022/mic_dev/dev-test-sony
 data:
   nb_label_frames: 100
   nb_unique_classes: 13
 mix_down: false
 num_samples: 240000
-preprocessed_data_dir: /content/processed-data_dir
+preprocessed_data_dir: /root/workspace/dataset_2022/mic_dev/preprocessed_dir
 sample_rate: 24000
 transforms:
 - hop_length: 512

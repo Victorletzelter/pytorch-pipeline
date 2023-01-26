@@ -444,6 +444,13 @@ class Audio_preprocess_dataset(Dataset):
                     torchaudio.save(processed_signals_path, signal.to("cpu"), sr=self.config['sample_rate'])
                 
                 torch.save(corresponding_labels, processed_labels_path)
+                
+                # If a "spectrogram type" transform is used among the transforms, we save the associated time values.
+                for transform in self.config['transforms']:
+                    if transform['type'] in ['STFT','PowerSpectrogram','MelSpectrogram','SALSA','SALSA_LITE'] : 
+                        times_values = coord_time(n=signal.shape[2], sr=self.config["sample_rate"], hop_length=transform["hop_length"],n_fft = transform["n_fft"])
+                        np.save(file = os.path.join(self.processed_data_dir,'time_values_prosseced_'+filename.split('.wav')[-2]),arr = times_values)
+                        break
 
 def load_audio(audio_path, config):
     """
@@ -551,29 +558,6 @@ def convert_polar_to_cartesian(dict_polar_tensors) :
     
     return dict_cartesian_tensors 
 
-# ------------------------------- EXTRACT LABELS AND PREPROCESS IT -------------------------------
-# def extract_all_labels(self):
-#     self.get_frame_stats()
-#     self._label_dir = self.get_label_dir()
-
-#     print('Extracting labels:')
-#     print('\t\taud_dir {}\n\t\tdesc_dir {}\n\t\tlabel_dir {}'.format(
-#         self._aud_dir, self._desc_dir, self._label_dir))
-#     create_folder(self._label_dir)
-#     for sub_folder in os.listdir(self._desc_dir):
-#         loc_desc_folder = os.path.join(self._desc_dir, sub_folder)
-#         for file_cnt, file_name in enumerate(os.listdir(loc_desc_folder)):
-#             wav_filename = '{}.wav'.format(file_name.split('.')[0])
-#             nb_label_frames = self._filewise_frames[file_name.split('.')[0]][1]
-#             desc_file_polar = self.load_output_format_file(os.path.join(loc_desc_folder, file_name))
-#             desc_file = self.convert_output_format_polar_to_cartesian(desc_file_polar)
-#             if self._multi_accdoa:
-#                 label_mat = self.get_adpit_labels_for_file(desc_file, nb_label_frames)
-#             else:
-#                 label_mat = self.get_labels_for_file(desc_file, nb_label_frames)
-#             print('{}: {}, {}'.format(file_cnt, file_name, label_mat.shape))
-#             np.save(os.path.join(self._label_dir, '{}.npy'.format(wav_filename.split('.')[0])), label_mat)
-
 def load_labels(cartesian_tensor, config):
         """
         Loads a 2D tensor of shape (..., 5) and converts it into a (n_label_frames, n_classes, 4) tensor.
@@ -634,9 +618,6 @@ def load_annotations_with_indexes(annotation_dir) :
         index += 1
     return annotations
 
-# def load_annotations(annotations_file):
-#     return pd.read_csv(annotations_file)
-
 def _cut_if_necessary(signal, num_samples):
     if signal.shape[1] > num_samples:
         signal = signal[:, :num_samples]
@@ -660,6 +641,36 @@ def _mix_down_if_necessary(signal):
     if signal.shape[0] > 1:
         signal = torch.mean(signal, dim=0, keepdim=True)
     return signal
+
+def samples_to_time(samples, sr) :
+    """
+    Credits : Librosa https://librosa.org/doc/main/_modules/librosa/core/convert.html
+    """
+    return np.asanyarray(samples) / float(sr)
+
+def frames_to_samples(frames,hop_length,n_fft) :
+    """
+    Credits : Librosa https://librosa.org/doc/main/_modules/librosa/core/convert.html
+    """
+    offset = 0
+    if n_fft is not None:
+        offset = int(n_fft // 2)
+
+    return (np.asanyarray(frames) * hop_length + offset).astype(int)
+
+def frames_to_time(frames,sr,hop_length,n_fft) :
+    """
+    Credits : Librosa https://librosa.org/doc/main/_modules/librosa/core/convert.html
+    """
+    samples = frames_to_samples(frames, hop_length=hop_length, n_fft=n_fft)
+
+    return samples_to_time(samples, sr=sr)
+
+def coord_time(n: int, sr: float = 22050, hop_length: int = 512,n_fft = 1024) :
+    """Get time coordinates from frames. 
+    Credits : Librosa https://librosa.org/doc/0.9.0/_modules/librosa/display.html"""
+    times: np.ndarray = frames_to_time(np.arange(n), sr=sr, hop_length=hop_length,n_fft=n_fft)
+    return times
 
 def main():
     # set the device to use for preprocessing
