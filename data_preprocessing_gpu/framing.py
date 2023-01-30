@@ -45,7 +45,7 @@ class AudioFrameGenerator:
         if start_signal + self.frame_size > self.num_samples:
             self.is_framed = False
 
-    def sample_frames(self, num_frames, random_seed=None):
+    def sample_frames(self, num_frames, random_seed=None): #TODOO : Adapt the labels part to this !!!
         if random_seed is not None:
             torch.manual_seed(random_seed)
         frame_starts = torch.sort(torch.unique(torch.randint(
