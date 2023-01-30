@@ -4,9 +4,11 @@ data:
   nb_label_frames: 100
   nb_unique_classes: 13
 mix_down: false
+annotation_resolution: 2400 #Annotation resolution in number of samples (here each 100 ms so 24000*0.1 = 2400 samples : step size btw two annotations)
 num_samples: 240000
 preprocessed_data_dir: /root/workspace/dataset_2022/mic_dev/preprocessed_dir
 sample_rate: 24000
+hop_framing_length: 240000
 transforms:
 - hop_length: 512
   n_fft: 1024

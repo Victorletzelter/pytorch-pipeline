@@ -9,6 +9,7 @@ import yaml
 import numpy as np
 import torch.multiprocessing
 import multiprocessing
+from framing import *
 
 def stacked_covmat_eigh(arr):
     """
@@ -366,6 +367,9 @@ class Audio_preprocess_dataset(Dataset):
         self.device = device 
         self.audio_loader = audio_loader
         self.config = config
+        self.is_framed = False #Bolean indicating whether the framing operation has been performed. 
+        self.frame_generator = AudioFrameGenerator(sample_rate = config['sample_rate'], frame_size = config['num_samples'], hop_size = config['hop_framing_length'],
+                                                   annotation_resolution=config['annotation_resolution'])
 
         if 'preprocessed_data_dir' in config :
             self.processed_data_dir = config['preprocessed_data_dir']        
@@ -385,25 +389,35 @@ class Audio_preprocess_dataset(Dataset):
         """
         Returns the preprocessed audio signal and label of the sample at index index from the dataset.
         """
-        audio_sample_path = self._get_audio_sample_path(index)
-        unformatted_labels = self._get_audio_sample_label(index)
-        signal, sr = self.audio_loader(audio_path = audio_sample_path, config = self.config)
-        labels = load_labels(unformatted_labels, self.config)
+        if self.is_framed is False : 
+            audio_sample_path = self._get_audio_sample_path(index,wav_mode=True)
+            unformatted_labels = self._get_audio_sample_label(index)
+            signal = self.audio_loader(audio_path = audio_sample_path, config = self.config, is_framed=False)
+            labels = load_labels(unformatted_labels, self.config)
+        else : 
+            audio_sample_path = self._get_audio_sample_path(index,wav_mode=False)
+            labels = self._get_audio_sample_label(index)
+            signal = self.audio_loader(audio_path = audio_sample_path, config = self.config, is_framed=True)
         signal = signal.to(self.device)
         labels = labels.to(self.device)
         return signal,labels
 
-    def _get_audio_sample_path(self, index):
+    def _get_audio_sample_path(self, index, wav_mode=True):
         """
-         Returns the file path of the audio sample at index index supposing the audio is in the WAV format.
+        Returns the file path of the audio sample at index index supposing the audio is in the WAV format.
         """
         filenames = {}
         for key in self.annotations:
             number = key.split("_")[-1]
             filenames[number] = key.split('_idx_'+number)[-2]
         
-        filename_from_index = filenames[str(index)]+'.wav'
-        path = os.path.join(self.audio_dir, filename_from_index)
+        if wav_mode is True :
+            filename_from_index = filenames[str(index)]+'.wav'
+            path = os.path.join(self.audio_dir, filename_from_index)
+
+        else : 
+            filename_from_index = filenames[str(index)]      
+            path = os.path.join(self.framed_dir, filename_from_index)
 
         return path
 
@@ -419,6 +433,49 @@ class Audio_preprocess_dataset(Dataset):
         filename_from_index = filenames[str(index)]
 
         return self.annotations[filename_from_index+'_idx_'+str(index)]
+    
+    def frame_all(self) :
+        """
+        Split the audio data into frames of equal length using the AudioFrameGenerator. 
+        """
+        self.framed_dir = os.path.join(self.processed_data_dir,'framed_signals_dir')
+        self.framed_labels_dir = os.path.join(self.processed_data_dir,'framed_labels_dir')
+            
+        if not os.path.exists(self.framed_dir):
+            os.makedirs(self.framed_dir)
+            os.makedirs(self.framed_labels_dir)
+            
+        # for index in range(len(self.annotations)) :
+        for index in range(0) :
+            
+            print('INDEX : {}'.format(index))
+            audio_sample_path = self._get_audio_sample_path(index)
+            file_name = os.path.basename(audio_sample_path)
+            unformatted_labels = self._get_audio_sample_label(index)
+            labels = load_labels(unformatted_labels, self.config)
+            
+            audio, _ = torchaudio.load(audio_sample_path)
+            
+            frames = self.frame_generator.frame(audio, labels) 
+            
+            frame_number = 0
+            
+            for frame in frames :
+                # print("FILE NAME : {}".format(file_name))
+                # print("FRAME NUMBER : {}".format(frame_number))
+                signal, label = frame
+                if self.frame_generator.is_framed :
+                    torch.save(signal, os.path.join(self.framed_dir,'frame_{}_'.format(frame_number)+file_name.split('.wav')[-2]))
+                    torch.save(label, os.path.join(self.framed_labels_dir,'labels_'+'frame_{}_'.format(frame_number)+file_name.split('.wav')[-2]))
+                frame_number+=1
+                
+        #Reindexing of all the frames
+        self.is_framed = True
+        self.annotations = {}
+        index = 0
+        for file in os.listdir(self.framed_labels_dir) :
+            self.annotations['{}'.format(file.split('labels_')[-2]+file.split('labels_')[-1]+'_idx_{}'.format(str(index)))] = torch.load(os.path.join(self.framed_labels_dir,file))
+            index += 1      
 
     def preprocess_and_save(self, batch_size=1,num_workers=0,save_as_tensor=True):
         """
@@ -452,22 +509,26 @@ class Audio_preprocess_dataset(Dataset):
                         np.save(file = os.path.join(self.processed_data_dir,'time_values_prosseced_'+filename.split('.wav')[-2]),arr = times_values)
                         break
 
-def load_audio(audio_path, config):
+def load_audio(audio_path, config, is_framed=True):
     """
-    Loads an audio file from the given audio_path using torchaudio.load() and applies various preprocessing steps like resampling, 
+    Loads a tensor corresponding to a framed audio file and applies various preprocessing steps like resampling, 
     cutting, padding, and spectrogram transformation to the signal based on the settings in config.
     """
-    signal, sr = torchaudio.load(audio_path)
+    if is_framed is True :
+        signal = torch.load(audio_path)
     
-    if "sample_rate" in config :
-        signal = _resample_if_necessary(signal, sr, config['sample_rate']) #For re sampling the signal
+    else : 
+        signal, sr = torchaudio.load(audio_path)
     
-    if config['mix_down'] is True: 
-        signal = _mix_down_if_necessary(signal) #For collapsing the channels into one single channel by averaging
+    # if "sample_rate" in config :
+    #     signal = _resample_if_necessary(signal, sr, config['sample_rate']) #For re sampling the signal
     
-    if "num_samples" in config :
-        signal = _cut_if_necessary(signal, config['num_samples']) #For cropping the signal in accordance with config['num_samples']
-        signal = _right_pad_if_necessary(signal, config['num_samples']) #For padding the signal in accordance with config['num_samples']
+    # if config['mix_down'] is True: 
+    #     signal = _mix_down_if_necessary(signal) #For collapsing the channels into one single channel by averaging
+    
+    # if "num_samples" in config :
+    #     signal = _cut_if_necessary(signal, config['num_samples']) #For cropping the signal in accordance with config['num_samples']
+    #     signal = _right_pad_if_necessary(signal, config['num_samples']) #For padding the signal in accordance with config['num_samples']
 
     for transform in config['transforms']:
 
@@ -503,10 +564,10 @@ def load_audio(audio_path, config):
                 signal = torchaudio.transforms.Spectrogram(n_fft=transform['n_fft'], hop_length=transform['hop_length'],window_fn=window_fn)(signal)
             signal = torchaudio.transforms.TimeMasking(time_mask_param=transform['time_mask_param'])(signal)
         elif transform['type'] == 'SALSA':
-            sf = SalsaFeatures(fs=sr, stft_winsize=transform['n_fft'],hop_length=transform['hop_length'],fmin_doa=50, fmax_doa=2000, fmax_spec=9000)
+            sf = SalsaFeatures(fs=config['sampling_rate'], stft_winsize=transform['n_fft'],hop_length=transform['hop_length'],fmin_doa=50, fmax_doa=2000, fmax_spec=9000)
             signal = sf(audio_path, clip_freqs=True, clip_spatial_alias=False,ew_thresh=5.0, covmat_avg_neighbours=3,is_tracking=True, floor_mask_ratio=1.5)
         elif transform['type'] == 'SALSA_LITE':
-            slf = SalsaLiteFeatures(fs=sr, stft_winsize=transform['n_fft'],hop_length=transform['hop_length'],fmin_doa=50, fmax_doa=2000, fmax_spec=9000)
+            slf = SalsaLiteFeatures(fs=config['sampling_rate'], stft_winsize=transform['n_fft'],hop_length=transform['hop_length'],fmin_doa=50, fmax_doa=2000, fmax_spec=9000)
             signal = slf(audio_path, clip_freqs=True, clip_spatial_alias=False)
         elif transform['type'] == 'MelSpecGCC':
             # Code based on the SALSA-Lite description of the features by Nguyen et al. : https://arxiv.org/pdf/2111.08192.pdf
@@ -536,7 +597,7 @@ def load_audio(audio_path, config):
         elif transform['type'] == 'PCEN':
             signal = pcen_audio(signal,alpha=transform['alpha'],delta=transform['delta'],r=transform['r'],s=transform['s'],epsilon=transform['epsilon'])
 
-    return signal, sr
+    return signal
 
 def convert_polar_to_cartesian(dict_polar_tensors) :
     """
@@ -565,13 +626,15 @@ def load_labels(cartesian_tensor, config):
         :param _desc_file: metadata description file
         :return: label_mat: of dimension [nb_frames, 3*max_classes], max_classes each for x, y, z axis,
         """
-        SED_label = torch.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
-        x_label = torch.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
-        y_label = torch.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
-        z_label = torch.zeros((config['data']['nb_label_frames'], config['data']['nb_unique_classes']))
+        n_labels_steps = cartesian_tensor[-1,0].int()
+        
+        SED_label = torch.zeros((n_labels_steps, config['data']['nb_unique_classes']))
+        x_label = torch.zeros((n_labels_steps, config['data']['nb_unique_classes']))
+        y_label = torch.zeros((n_labels_steps, config['data']['nb_unique_classes']))
+        z_label = torch.zeros((n_labels_steps, config['data']['nb_unique_classes']))
         
         for line in range(cartesian_tensor.shape[0]) :
-            if cartesian_tensor[line,0]<config['data']['nb_label_frames'] :
+            if cartesian_tensor[line,0]<n_labels_steps :
               SED_label[cartesian_tensor[line,0].int(),cartesian_tensor[line,1].int()]=1
               x_label[cartesian_tensor[line,0].int(),cartesian_tensor[line,1].int()]=cartesian_tensor[line,2]
               y_label[cartesian_tensor[line,0].int(),cartesian_tensor[line,1].int()]=cartesian_tensor[line,3]
@@ -683,7 +746,9 @@ def main():
     # create the dataset
     dataset = Audio_preprocess_dataset(config=CONFIG_FILE, annotation_loader_with_indexes=load_annotations_with_indexes, audio_loader=load_audio, device=device)
 
-    # # preprocess and save the audio data
+    dataset.frame_all()
+    
+    # preprocess and save the audio data
     batch_size = 2
     num_workers = 0
     save_as_tensor = True
