@@ -445,10 +445,8 @@ class Audio_preprocess_dataset(Dataset):
             os.makedirs(self.framed_dir)
             os.makedirs(self.framed_labels_dir)
             
-        # for index in range(len(self.annotations)) :
-        for index in range(0) :
+        for index in range(len(self.annotations)) :
             
-            print('INDEX : {}'.format(index))
             audio_sample_path = self._get_audio_sample_path(index)
             file_name = os.path.basename(audio_sample_path)
             unformatted_labels = self._get_audio_sample_label(index)
@@ -461,8 +459,6 @@ class Audio_preprocess_dataset(Dataset):
             frame_number = 0
             
             for frame in frames :
-                # print("FILE NAME : {}".format(file_name))
-                # print("FRAME NUMBER : {}".format(frame_number))
                 signal, label = frame
                 if self.frame_generator.is_framed :
                     torch.save(signal, os.path.join(self.framed_dir,'frame_{}_'.format(frame_number)+file_name.split('.wav')[-2]))

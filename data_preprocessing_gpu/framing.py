@@ -18,9 +18,6 @@ class AudioFrameGenerator:
         
         while start_signal + self.frame_size <= self.num_samples:
             self.is_framed = True
-            # print('FRAMED AUDIO SIGNAL SHAPE : {}'.format(audio_signal[:,start_signal:start_signal + self.frame_size].shape)) 
-            # print('FRAMED LABELS SHAPE : {}'.format(labels[start_labels:start_labels + self.frame_size//self.annotation_resolution,:,:].shape))
-            # print('START_SIGNAL : {}'.format(start_signal)) 
             
             # Deal with missing labels in the last frames
             if labels[start_labels:start_labels + self.frame_size//self.annotation_resolution,:,:].shape[0]<self.frame_size//self.annotation_resolution :
@@ -47,14 +44,6 @@ class AudioFrameGenerator:
             
         if start_signal + self.frame_size > self.num_samples:
             self.is_framed = False
-
-    # def __iter__(self,audio_signal):
-        
-    #     self.num_samples, self.num_channels = audio_signal.shape
-    #     start = 0
-    #     while start + self.frame_size <= self.num_samples:
-    #         yield audio_signal[start:start + self.frame_size, :]
-    #         start += self.hop_size
 
     def sample_frames(self, num_frames, random_seed=None):
         if random_seed is not None:
